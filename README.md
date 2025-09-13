@@ -106,10 +106,39 @@ The application provides detailed logging:
     - Verify your files have the correct extensions (.heic, .heif, etc.)
     - Check that files are actually in the `photos` directory
 
-3. **Conversion failures**
+3. **"cannot identify image" or conversion failures**
+
+    - This often indicates corrupted or invalid HEIC files
+    - Some files may have HEIC extensions but not be valid HEIC format
+    - Try the diagnostic tool: `docker run --rm -v $(pwd)/photos:/app/photos heic-converter python test_heic.py`
     - Check the logs for specific error messages
     - Ensure HEIC files are not corrupted
     - Verify sufficient disk space for converted files
+
+4. **Cross-platform issues (Windows/Mac/Linux)**
+    - The Docker container provides consistent behavior across platforms
+    - If running locally, ensure all system dependencies are installed
+    - Use the containerized version for best compatibility
+
+### Diagnostic Tool
+
+Use the included diagnostic tool to troubleshoot problematic HEIC files:
+
+```bash
+# Diagnose all HEIC files in photos directory
+docker run --rm -v $(pwd)/photos:/app/photos heic-converter python test_heic.py
+
+# Diagnose a specific file
+docker run --rm -v $(pwd)/photos:/app/photos heic-converter python test_heic.py /app/photos/problematic_file.HEIC
+```
+
+The diagnostic tool will:
+
+-   Check file existence and size
+-   Verify file headers and MIME types
+-   Test HEIC library compatibility
+-   Attempt test conversions
+-   Provide detailed error information
 
 ### Performance Notes
 

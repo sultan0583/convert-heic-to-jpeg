@@ -8,7 +8,12 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     libheif1 \
     libheif-dev \
+    libde265-0 \
+    libx265-dev \
     pkg-config \
+    libmagic1 \
+    file \
+    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first for better caching
