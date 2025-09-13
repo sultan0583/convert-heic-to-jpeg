@@ -14,6 +14,19 @@ import pillow_heif
 import logging
 import magic
 
+# Import additional libraries for fallback methods
+try:
+    import pyheif
+    PYHEIF_AVAILABLE = True
+except ImportError:
+    PYHEIF_AVAILABLE = False
+    
+try:
+    import imageio
+    IMAGEIO_AVAILABLE = True
+except ImportError:
+    IMAGEIO_AVAILABLE = False
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -83,7 +96,7 @@ def is_heic_file(file_path):
 
 def convert_heic_to_jpeg(input_path, output_path, quality=95):
     """
-    Convert a single HEIC file to JPEG format.
+    Convert a single HEIC file to JPEG format using multiple fallback methods.
     
     Args:
         input_path (Path): Path to the input HEIC file
@@ -93,6 +106,8 @@ def convert_heic_to_jpeg(input_path, output_path, quality=95):
     Returns:
         bool: True if conversion successful, False otherwise
     """
+    conversion_methods = []
+    
     try:
         # First, validate that this is actually a HEIC file
         if not is_heic_file(input_path):
@@ -104,46 +119,134 @@ def convert_heic_to_jpeg(input_path, output_path, quality=95):
             logger.error(f"File {input_path.name} is empty or does not exist")
             return False
         
-        # Method 1: Try with PIL and pillow_heif
+        # Method 1: Try with PIL and pillow_heif (standard approach)
         try:
             with Image.open(input_path) as image:
-                # Convert to RGB if necessary (HEIC can have different color modes)
-                if image.mode != 'RGB':
+                # Handle different color modes
+                if image.mode in ['RGBA', 'LA']:
+                    # Create white background for transparency
+                    background = Image.new('RGB', image.size, (255, 255, 255))
+                    if image.mode == 'RGBA':
+                        background.paste(image, mask=image.split()[-1])
+                    else:
+                        background.paste(image, mask=image.split()[-1])
+                    image = background
+                elif image.mode != 'RGB':
                     image = image.convert('RGB')
                 
                 # Save as JPEG
                 image.save(output_path, 'JPEG', quality=quality, optimize=True)
                 
-            logger.info(f"Successfully converted: {input_path.name} -> {output_path.name}")
+            logger.info(f"Successfully converted (PIL method): {input_path.name} -> {output_path.name}")
             return True
             
         except Exception as pil_error:
-            logger.warning(f"PIL conversion failed for {input_path.name}: {pil_error}")
+            conversion_methods.append(f"PIL method failed: {pil_error}")
+            logger.debug(f"PIL conversion failed for {input_path.name}: {pil_error}")
             
-            # Method 2: Try direct pillow_heif approach
+            # Method 2: Try direct pillow_heif with improved error handling
             try:
-                heif_file = pillow_heif.open_heif(str(input_path))
+                heif_file = pillow_heif.open_heif(str(input_path), convert_hdr_to_8bit=True, bgr_mode=False)
+                
+                # Try to get the primary image if multiple images exist
+                if hasattr(heif_file, 'primary_image'):
+                    heif_data = heif_file.primary_image()
+                else:
+                    heif_data = heif_file
+                
+                # Create PIL image with proper handling
                 image = Image.frombytes(
-                    heif_file.mode,
-                    heif_file.size,
-                    heif_file.data,
+                    heif_data.mode,
+                    heif_data.size,
+                    heif_data.data,
                     "raw",
                 )
                 
-                # Convert to RGB if necessary
-                if image.mode != 'RGB':
+                # Handle different color modes
+                if image.mode in ['RGBA', 'LA']:
+                    background = Image.new('RGB', image.size, (255, 255, 255))
+                    if image.mode == 'RGBA':
+                        background.paste(image, mask=image.split()[-1])
+                    else:
+                        background.paste(image, mask=image.split()[-1])
+                    image = background
+                elif image.mode != 'RGB':
                     image = image.convert('RGB')
                 
                 # Save as JPEG
                 image.save(output_path, 'JPEG', quality=quality, optimize=True)
                 
-                logger.info(f"Successfully converted (direct method): {input_path.name} -> {output_path.name}")
+                logger.info(f"Successfully converted (direct pillow_heif): {input_path.name} -> {output_path.name}")
                 return True
                 
             except Exception as direct_error:
-                logger.error(f"Both conversion methods failed for {input_path.name}:")
-                logger.error(f"  PIL error: {pil_error}")
-                logger.error(f"  Direct error: {direct_error}")
+                conversion_methods.append(f"Direct pillow_heif failed: {direct_error}")
+                logger.debug(f"Direct pillow_heif failed for {input_path.name}: {direct_error}")
+                
+                # Method 3: Try with pyheif if available
+                if PYHEIF_AVAILABLE:
+                    try:
+                        heif_file = pyheif.read(str(input_path))
+                        image = Image.frombytes(
+                            heif_file.mode,
+                            heif_file.size,
+                            heif_file.data,
+                            "raw",
+                            heif_file.mode,
+                            heif_file.stride,
+                        )
+                        
+                        # Handle color modes
+                        if image.mode in ['RGBA', 'LA']:
+                            background = Image.new('RGB', image.size, (255, 255, 255))
+                            if image.mode == 'RGBA':
+                                background.paste(image, mask=image.split()[-1])
+                            else:
+                                background.paste(image, mask=image.split()[-1])
+                            image = background
+                        elif image.mode != 'RGB':
+                            image = image.convert('RGB')
+                        
+                        image.save(output_path, 'JPEG', quality=quality, optimize=True)
+                        
+                        logger.info(f"Successfully converted (pyheif method): {input_path.name} -> {output_path.name}")
+                        return True
+                        
+                    except Exception as pyheif_error:
+                        conversion_methods.append(f"pyheif method failed: {pyheif_error}")
+                        logger.debug(f"pyheif conversion failed for {input_path.name}: {pyheif_error}")
+                
+                # Method 4: Try with imageio if available
+                if IMAGEIO_AVAILABLE:
+                    try:
+                        # Read with imageio
+                        image_data = imageio.imread(str(input_path))
+                        
+                        # Convert numpy array to PIL Image
+                        if len(image_data.shape) == 3 and image_data.shape[2] == 4:
+                            # Handle RGBA
+                            image = Image.fromarray(image_data, 'RGBA')
+                            background = Image.new('RGB', image.size, (255, 255, 255))
+                            background.paste(image, mask=image.split()[-1])
+                            image = background
+                        else:
+                            image = Image.fromarray(image_data)
+                            if image.mode != 'RGB':
+                                image = image.convert('RGB')
+                        
+                        image.save(output_path, 'JPEG', quality=quality, optimize=True)
+                        
+                        logger.info(f"Successfully converted (imageio method): {input_path.name} -> {output_path.name}")
+                        return True
+                        
+                    except Exception as imageio_error:
+                        conversion_methods.append(f"imageio method failed: {imageio_error}")
+                        logger.debug(f"imageio conversion failed for {input_path.name}: {imageio_error}")
+                
+                # All methods failed
+                logger.error(f"All conversion methods failed for {input_path.name}:")
+                for i, method_error in enumerate(conversion_methods, 1):
+                    logger.error(f"  Method {i}: {method_error}")
                 return False
         
     except Exception as e:
@@ -177,6 +280,15 @@ def get_heic_files(directory):
 
 def main():
     """Main function to convert all HEIC files in the photos directory."""
+    
+    # Log available conversion methods
+    available_methods = ["pillow_heif + PIL"]
+    if PYHEIF_AVAILABLE:
+        available_methods.append("pyheif")
+    if IMAGEIO_AVAILABLE:
+        available_methods.append("imageio")
+    
+    logger.info(f"Available conversion methods: {', '.join(available_methods)}")
     
     # Define the photos directory
     photos_dir = Path('/app/photos')
