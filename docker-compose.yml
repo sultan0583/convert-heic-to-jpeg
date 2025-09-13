@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  heic-converter:
+    build: .
+    container_name: heic-to-jpeg-converter
+    volumes:
+      # Mount the local photos directory to the container's photos directory
+      - ./photos:/app/photos
+      # Mount logs directory to persist conversion logs
+      - ./logs:/app/logs
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: "no"  # Run once and exit
